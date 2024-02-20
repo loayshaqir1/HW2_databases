@@ -92,6 +92,20 @@ def create_tables():
             SELECT *
             FROM ApartmentOwnersWithName A JOIN Apartment B ON(A.apartment_id = B.id);
             
+            CREATE VIEW ApartmentReviewsFullData AS
+            SELECT owner_id, A.apartment_id AS apartment_id, name, customer_id, review_date, rating, review_text
+            FROM ApartmentOwnersFullData A JOIN CustomerReviews C ON (A.apartment_id = C.apartment_id);
+            
+            CREATE VIEW ApartmentAvgRating AS
+            SELECT owner_id, apartment_id, AVG(rating) AS avg_rating
+            FROM ApartmentReviewsFullData
+            GROUP BY apartment_id, owner_id;
+            
+            CREATE VIEW OwnerAvgRating AS
+            SELECT owner_id, AVG(avg_rating) AS avg_rating
+            FROM ApartmentAvgRating
+            GROUP BY owner_id;
+            
             COMMIT;
         """)
 
@@ -595,8 +609,27 @@ def get_owner_apartments(owner_id: int) -> List[Apartment]:
 # ---------------------------------- BASIC API: ----------------------------------
 
 def get_apartment_rating(apartment_id: int) -> float:
-    # TODO: implement
-    pass
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("""
+                    SELECT avg_rating
+                    FROM ApartmentAvgRating
+                    WHERE apartment_id = {apartment_id};
+                """).format(apartment_id = sql.Literal(apartment_id))
+
+        rows_affected, res = conn.execute(query)
+        # If the result of the query returned empty table it means that an apartment with the requested id does not exist
+        if not rows_affected:
+            return ReturnValue.NOT_EXISTS
+        conn.commit()
+    except:
+        return ReturnValue.NOT_EXISTS
+    finally:
+        conn.close()
+
+    # Return the object of the requested Owner
+    return res
 
 
 def get_owner_rating(owner_id: int) -> float:
@@ -638,47 +671,3 @@ def get_apartment_recommendation(customer_id: int) -> List[Tuple[Apartment, floa
 if __name__ == '__main__':
     drop_tables()
     create_tables()
-    loay = Customer(212080162, 'Loay Shaqir')
-    print(f"Add_customer(loay): {add_customer(loay)}")
-    apartment1 = Apartment(14, 'alkhader 1', 'tamra', 'israel', 220)
-    print(f"add_partment(apartment1): {add_apartment(apartment1)}")
-    start_date = date(2024,2,20)
-    end_date = date(2024,2,24)
-    res1 = customer_made_reservation(212080162,14,start_date, end_date,100.0)
-    # print(f"res: {res}")
-    res = customer_made_reservation(212080162,15,start_date, end_date,100.0)
-    print(f"res: {res}")
-    res = customer_made_reservation(212080162,14,start_date, end_date,100.0)
-    print(f"res: {res}")
-    res = customer_made_reservation(212080168,146,start_date, end_date,200.0)
-    print(f"res: {res}")
-    res = customer_made_reservation(212080162,14,date(2024,2,21), date(2024,2,21),200.0)
-    print(f"res: {res}")
-    res = customer_made_reservation(212080162,14,date(2024,2,21), end_date,100.0)
-    print(f"res: {res}")
-    res = customer_cancelled_reservation(212080162,14,start_date)
-    print(res)
-    res = customer_cancelled_reservation(0,15,start_date)
-    print(res)
-    res1 = customer_made_reservation(212080162,14,start_date, end_date,100.0)
-    print(res1)
-    res2 = customer_reviewed_apartment(212080162,14,date(2025,1,1),3,"NOT BAD")
-    print(res2)
-    res2 = customer_reviewed_apartment(212080162,14,date(2025,1,1),3,"NOT BAD")
-    print(res2)
-    res2 = customer_reviewed_apartment(212080162,11,date(2025,1,1),3,"NOT BAD")
-    print(res2)
-
-    apartment1 = Apartment(1000, 'alkhader 1', 'tamraaa', 'israel', 220)
-    print(add_apartment(apartment1))
-    loay = Owner(11,'loay')
-    print(add_owner(loay))
-    print(owner_owns_apartment(11,1000))
-    print(get_apartment_owner(1000))
-    apartment2 = Apartment(1022, 'alkh22ader 1', 'tamraaa', 'israel', 220)
-    print(add_apartment(apartment2))
-    print(owner_owns_apartment(11,1022))
-    res = get_owner_apartments(11)
-    for result in res:
-        print(result)
-    print(get_owner_apartments(123))
