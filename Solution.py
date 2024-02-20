@@ -90,11 +90,11 @@ def create_tables():
             
             CREATE VIEW ApartmentOwnersFullData AS
             SELECT *
-            FROM ApartmentOwnersWithName A JOIN Apartment B ON(A.apartment_id = B.id);
+            FROM ApartmentOwnersWithName A RIGHT OUTER JOIN Apartment B ON(A.apartment_id = B.id);
             
             CREATE VIEW ApartmentReviewsFullData AS
-            SELECT owner_id, A.apartment_id AS apartment_id, name, customer_id, review_date, rating, review_text
-            FROM ApartmentOwnersFullData A JOIN CustomerReviews C ON (A.apartment_id = C.apartment_id);
+            SELECT owner_id, A.id AS apartment_id, name, customer_id, review_date, rating, review_text
+            FROM ApartmentOwnersFullData A JOIN CustomerReviews C ON (A.id = C.apartment_id);
             
             CREATE VIEW ApartmentAvgRating AS
             SELECT owner_id, apartment_id, AVG(rating) AS avg_rating
@@ -105,6 +105,10 @@ def create_tables():
             SELECT owner_id, AVG(avg_rating) AS avg_rating
             FROM ApartmentAvgRating
             GROUP BY owner_id;
+            
+            CREATE VIEW OwnerCustomerReservations AS
+            SELECT owner_id, name AS owner_name, customer_id, A.apartment_id AS apartment_id 
+            FROM ApartmentOwnersWithName A RIGHT OUTER JOIN CustomerReservations C ON (A.apartment_id=C.apartment_id);
             
             COMMIT;
         """)
@@ -621,30 +625,85 @@ def get_apartment_rating(apartment_id: int) -> float:
         rows_affected, res = conn.execute(query)
         # If the result of the query returned empty table it means that an apartment with the requested id does not exist
         if not rows_affected:
-            return ReturnValue.NOT_EXISTS
+            return 0.0
         conn.commit()
     except:
-        return ReturnValue.NOT_EXISTS
+        return 0.0
     finally:
         conn.close()
 
     # Return the object of the requested Owner
-    return res
+    return float(res[0]['avg_rating'])
 
 
 def get_owner_rating(owner_id: int) -> float:
-    # TODO: implement
-    pass
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("""
+                    SELECT avg_rating
+                    FROM OwnerAvgRating
+                    WHERE owner_id = {owner_id};
+                """).format(owner_id = sql.Literal(owner_id))
+
+        rows_affected, res = conn.execute(query)
+        # If the result of the query returned empty table it means that an apartment with the requested id does not exist
+        if not rows_affected:
+            return 0.0
+        conn.commit()
+    except:
+        return 0.0
+    finally:
+        conn.close()
+
+    # Return the object of the requested Owner
+    return float(res[0]['avg_rating'])
 
 
 def get_top_customer() -> Customer:
-    # TODO: implement
-    pass
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("""
+                    SELECT customer_id
+                    FROM OwnerCustomerReservations
+                    GROUP BY customer_id
+                    ORDER BY COUNT(*) DESC, customer_id ASC
+                    LIMIT 1;
+                """).format()
+
+        rows_affected, res = conn.execute(query)
+        if not rows_affected:
+            return Customer.bad_customer()
+        conn.commit()
+    except:
+        return Customer.bad_customer()
+    finally:
+        conn.close()
+
+    return res[0]['customer_id']
 
 
 def reservations_per_owner() -> List[Tuple[str, int]]:
-    # TODO: implement
-    pass
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("""
+                    SELECT owner_name, COUNT(*) AS reservations
+                    FROM OwnerCustomerReservations
+                    GROUP BY owner_name, owner_id;
+                """).format()
+
+        rows_affected, res = conn.execute(query)
+        if not rows_affected:
+            return []
+        conn.commit()
+    except:
+        return []
+    finally:
+        conn.close()
+
+    return res.rows
 
 
 # ---------------------------------- ADVANCED API: ----------------------------------
@@ -671,3 +730,31 @@ def get_apartment_recommendation(customer_id: int) -> List[Tuple[Apartment, floa
 if __name__ == '__main__':
     drop_tables()
     create_tables()
+    print(add_apartment(Apartment(1,'a','haifa','israel',100)))
+    print(add_owner(Owner(10,'loay')))
+    print(owner_owns_apartment(10,1))
+    print(add_customer(Customer(1000,'kamil')))
+    print(customer_made_reservation(1000,1,date(2024,2,20), date(2024,2,23),100))
+    print(customer_reviewed_apartment(1000,1,date(2025,1,1),4,'not bad'))
+    print(add_apartment(Apartment(2,'b','haifa','israel',50)))
+    print(customer_made_reservation(1000,2,date(2024,2,20),date(2024,2,21),100))
+    print(customer_reviewed_apartment(1000,2,date(2025,2,2),2,'very bad'))
+    print(owner_owns_apartment(10,2))
+    print(get_apartment_rating(2))
+    print(get_owner_rating(10))
+    print(get_owner_rating(11))
+    print(add_customer(Customer(1001,'kamil1')))
+    print(add_apartment(Apartment(3,'c','haifa','israel',100)))
+    print(customer_made_reservation(1001,3,date(2024,2,20),date(2024,2,21),100.0))
+    print(customer_reviewed_apartment(1001,3,date(2024,2,22),10,'very good!'))
+    print(get_owner_rating(11))
+    print(get_owner_rating(10))
+    print(add_owner(Owner(11,'kokobalala')))
+    print(owner_owns_apartment(11,3))
+    print(get_owner_rating(11))
+    print(customer_made_reservation(1001,3,date(2026,2,20),date(2026,2,21),100.0))
+    print(get_top_customer())
+    print(customer_made_reservation(1001,3,date(2027,2,20),date(2027,2,21),100.0))
+    print(get_top_customer())
+    print(reservations_per_owner())
+
