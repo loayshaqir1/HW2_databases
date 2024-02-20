@@ -84,8 +84,13 @@ def create_tables():
                 FOREIGN KEY(apartment_id) REFERENCES Apartment(id) ON DELETE CASCADE
             );
             
+            CREATE VIEW ApartmentOwnersWithName AS
+            SELECT A.owner_id AS owner_id, apartment_id, name
+            FROM ApartmentOwners A JOIN Owner O ON (A.owner_id=O.owner_id);
             
-            
+            CREATE VIEW ApartmentOwnersFullData AS
+            SELECT *
+            FROM ApartmentOwnersWithName A JOIN Apartment B ON(A.apartment_id = B.id);
             
             COMMIT;
         """)
@@ -133,6 +138,7 @@ def drop_tables():
                      "DROP TABLE IF EXISTS CustomerReservations CASCADE; \n" +
                      "DROP TABLE IF EXISTS CustomerReviews CASCADE; \n" +
                      "DROP TABLE IF EXISTS ApartmentOwners CASCADE; \n" +
+                     "DROP VIEW IF EXISTS ApartmentOwnersWithName CASCADE; \n" +
                      "COMMIT;")
     except (DatabaseException.ConnectionInvalid, DatabaseException.database_ini_ERROR,
             DatabaseException.UNKNOWN_ERROR) as e:
@@ -539,13 +545,51 @@ def owner_doesnt_own_apartment(owner_id: int, apartment_id: int) -> ReturnValue:
 def get_apartment_owner(apartment_id: int) -> Owner:
     conn = None
     try:
-        pass
+        conn = Connector.DBConnector()
+        query = sql.SQL("""
+                    SELECT owner_id, name
+                    FROM ApartmentOwnersWithName
+                    WHERE apartment_id = {apartment_id};
+                """).format(apartment_id = sql.Literal(apartment_id))
+
+        rows_affected, res = conn.execute(query)
+        # If the result of the query returned empty table it means that an apartment with the requested id does not exist
+        if not rows_affected:
+            return Owner.bad_owner()
+        conn.commit()
     except:
-        pass
+        return Owner.bad_owner()
+    finally:
+        conn.close()
+
+    # Return the object of the requested Owner
+    return res_to_owner(res)
 
 def get_owner_apartments(owner_id: int) -> List[Apartment]:
-    # TODO: implement
-    pass
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("""
+                    SELECT id, address, city, country, size
+                    FROM ApartmentOwnersFullData
+                    WHERE owner_id = {owner_id};
+                """).format(owner_id=sql.Literal(owner_id))
+
+        rows_affected, res = conn.execute(query)
+        # If the result of the query returned empty table it means that this owner does not own any apartment
+        if not rows_affected:
+            return []
+        conn.commit()
+    except:
+        return []
+    finally:
+        conn.close()
+
+    # Return a list with requested apartments
+    apartments_list = []
+    for i in range(len(res.rows)):
+        apartments_list.append(Apartment(*res.rows[i]))
+    return apartments_list
 
 
 # ---------------------------------- BASIC API: ----------------------------------
@@ -624,3 +668,17 @@ if __name__ == '__main__':
     print(res2)
     res2 = customer_reviewed_apartment(212080162,11,date(2025,1,1),3,"NOT BAD")
     print(res2)
+
+    apartment1 = Apartment(1000, 'alkhader 1', 'tamraaa', 'israel', 220)
+    print(add_apartment(apartment1))
+    loay = Owner(11,'loay')
+    print(add_owner(loay))
+    print(owner_owns_apartment(11,1000))
+    print(get_apartment_owner(1000))
+    apartment2 = Apartment(1022, 'alkh22ader 1', 'tamraaa', 'israel', 220)
+    print(add_apartment(apartment2))
+    print(owner_owns_apartment(11,1022))
+    res = get_owner_apartments(11)
+    for result in res:
+        print(result)
+    print(get_owner_apartments(123))
