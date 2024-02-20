@@ -84,6 +84,9 @@ def create_tables():
                 FOREIGN KEY(apartment_id) REFERENCES Apartment(id) ON DELETE CASCADE
             );
             
+            
+            
+            
             COMMIT;
         """)
 
