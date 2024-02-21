@@ -34,6 +34,7 @@ def create_tables():
                 address TEXT NOT NULL,
                 city TEXT NOT NULL,
                 country TEXT NOT NULL,
+                city_country TEXT NOT NULL,
                 size INTEGER NOT NULL,
                 CHECK(id > 0), CHECK(size > 0),
                 PRIMARY KEY(id),
@@ -110,6 +111,23 @@ def create_tables():
             SELECT owner_id, name AS owner_name, customer_id, A.apartment_id AS apartment_id 
             FROM ApartmentOwnersWithName A RIGHT OUTER JOIN CustomerReservations C ON (A.apartment_id=C.apartment_id);
             
+            CREATE VIEW CustomerReservationsWithPricePerNight AS
+            SELECT 
+                customer_id,
+                apartment_id,
+                start_date,
+                end_date,
+                total_price,
+                total_price / (end_date - start_date) AS price_per_night
+            FROM CustomerReservations;
+
+            CREATE VIEW ApartmentPriceRatingAVG AS
+            SELECT A.apartment_id AS apartment_id, price_per_night, rating
+            FROM CustomerReservationsWithPricePerNight C LEFT OUTER JOIN ApartmentReviewsFullData A ON (C.apartment_id=A.apartment_id);
+            
+            CREATE VIEW ApartmentPriceRatingAvgFullData AS
+            SELECT *
+            FROM ApartmentPriceRatingAVG A JOIN Apartment B ON (A.apartment_id = B.id);
             COMMIT;
         """)
 
@@ -247,12 +265,15 @@ def add_apartment(apartment: Apartment) -> ReturnValue:
         address = apartment.get_address()
         city = apartment.get_city()
         country = apartment.get_country()
+        city_country = f"{city}_{country}"
         size = apartment.get_size()
-        query = sql.SQL("INSERT INTO Apartment(id, address, city, country, size) values({id}, {address}, {city}, {country}, {size});") \
+        query = sql.SQL("INSERT INTO Apartment(id, address, city, country,city_country, size) values({id}, " +
+                        "{address}, {city}, {country}, {city_country},{size});") \
             .format(id=sql.Literal(id),
                     address=sql.Literal(address),
                     city=sql.Literal(city),
                     country=sql.Literal(country),
+                    city_country=sql.Literal(city_country),
                     size=sql.Literal(size))
         conn.execute(query)
         conn.commit()
@@ -594,7 +615,6 @@ def get_owner_apartments(owner_id: int) -> List[Apartment]:
                 """).format(owner_id=sql.Literal(owner_id))
 
         rows_affected, res = conn.execute(query)
-        # If the result of the query returned empty table it means that this owner does not own any apartment
         if not rows_affected:
             return []
         conn.commit()
@@ -603,7 +623,6 @@ def get_owner_apartments(owner_id: int) -> List[Apartment]:
     finally:
         conn.close()
 
-    # Return a list with requested apartments
     apartments_list = []
     for i in range(len(res.rows)):
         apartments_list.append(Apartment(*res.rows[i]))
@@ -623,7 +642,6 @@ def get_apartment_rating(apartment_id: int) -> float:
                 """).format(apartment_id = sql.Literal(apartment_id))
 
         rows_affected, res = conn.execute(query)
-        # If the result of the query returned empty table it means that an apartment with the requested id does not exist
         if not rows_affected:
             return 0.0
         conn.commit()
@@ -632,7 +650,6 @@ def get_apartment_rating(apartment_id: int) -> float:
     finally:
         conn.close()
 
-    # Return the object of the requested Owner
     return float(res[0]['avg_rating'])
 
 
@@ -647,7 +664,6 @@ def get_owner_rating(owner_id: int) -> float:
                 """).format(owner_id = sql.Literal(owner_id))
 
         rows_affected, res = conn.execute(query)
-        # If the result of the query returned empty table it means that an apartment with the requested id does not exist
         if not rows_affected:
             return 0.0
         conn.commit()
@@ -656,7 +672,6 @@ def get_owner_rating(owner_id: int) -> float:
     finally:
         conn.close()
 
-    # Return the object of the requested Owner
     return float(res[0]['avg_rating'])
 
 
@@ -707,15 +722,68 @@ def reservations_per_owner() -> List[Tuple[str, int]]:
 
 
 # ---------------------------------- ADVANCED API: ----------------------------------
-
+# Todo: currently not fully counting unique (city, country) pairs in ApartmentOwnersFullData
 def get_all_location_owners() -> List[Owner]:
-    # TODO: implement
-    pass
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("""
+                    SELECT owner_id, name
+                    FROM ApartmentOwnersFullData
+                    GROUP BY owner_id, name
+                    HAVING COUNT (DISTINCT city_country) = (
+                        SELECT COUNT(DISTINCT city_country)
+                        FROM Apartment
+                    );
+                """).format()
+
+        rows_affected, res = conn.execute(query)
+        if not rows_affected:
+            return []
+        conn.commit()
+    except Exception as e:
+        print(e)
+        return []
+    finally:
+        conn.close()
+
+    all_location_owners = []
+    for row in res:
+        all_location_owners.append(Owner(row['owner_id'], row['name']))
+    return all_location_owners
 
 
 def best_value_for_money() -> Apartment:
-    # TODO: implement
-    pass
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+        # We can use the aggregation funcitons here as the apartment id has one address and one city etc...
+        query = sql.SQL("""
+                    SELECT 
+                        apartment_id AS id, 
+                        MAX(address) AS address, 
+                        MAX(city) AS city, 
+                        MAX(country) AS country, 
+                        MAX(size) AS size, 
+                        AVG(rating) / AVG(price_per_night) AS value_for_money
+                    FROM 
+                        ApartmentPriceRatingAvgFullData
+                    GROUP BY 
+                        apartment_id
+                    ORDER BY 
+                        value_for_money DESC
+                    LIMIT 1;
+                """).format()
+        rows_affected, res = conn.execute(query)
+        if not rows_affected:
+            return Apartment.bad_apartment()
+        conn.commit()
+    except Exception as e:
+        print(e)
+        return Apartment.bad_apartment()
+    finally:
+        conn.close()
+    return res_to_apartment(res)
 
 
 def profit_per_month(year: int) -> List[Tuple[int, float]]:
@@ -757,4 +825,10 @@ if __name__ == '__main__':
     print(customer_made_reservation(1001,3,date(2027,2,20),date(2027,2,21),100.0))
     print(get_top_customer())
     print(reservations_per_owner())
-
+    print(add_apartment(Apartment(4,'d','Tel aviv','Israel',40)))
+    print(get_all_location_owners())
+    print(owner_owns_apartment(11,4))
+    res = get_all_location_owners()
+    for owner in res:
+        print(owner)
+    print(best_value_for_money())
