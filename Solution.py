@@ -129,6 +129,24 @@ def create_tables():
             SELECT *
             FROM ApartmentPriceRatingAVG A JOIN Apartment B ON (A.apartment_id = B.id);
             COMMIT;
+            
+            CREATE VIEW CustomerReviewsProd AS
+            SELECT A.customer_id AS customer_a_id,
+                   B.customer_id AS customer_b_id,
+                   A.apartment_id AS apartment_id,
+                   A.rating AS customer_a_rating,
+                   B.rating AS customer_b_rating
+            FROM CustomerReviews A, CustomerReviews B
+            WHERE A.customer_id != B.customer_id AND A.apartment_id = B.apartment_id;
+            
+            CREATE VIEW CustomerReviewsAvgRatio AS
+            SELECT customer_a_id, customer_b_id, AVG(customer_b_rating*1.0/customer_a_rating) AS avg_ratio
+            FROM CustomerReviewsProd A
+            GROUP BY customer_a_id, customer_b_id;
+            
+
+            
+            
         """)
 
     except (DatabaseException.ConnectionInvalid, DatabaseException.database_ini_ERROR,
@@ -787,8 +805,34 @@ def best_value_for_money() -> Apartment:
 
 
 def profit_per_month(year: int) -> List[Tuple[int, float]]:
-    # TODO: implement
-    pass
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("""
+                SELECT EXTRACT(MONTH FROM end_date) AS month, 
+                       SUM(total_price * 0.15) AS profit
+                FROM CustomerReservations
+                WHERE EXTRACT(YEAR FROM end_date) = {year}
+                GROUP BY month
+                ORDER BY month
+                """).format(year=sql.Literal(year))
+        rows_affected, res = conn.execute(query)
+        if not rows_affected:
+            return [(i, 0.0) for i in range(1,13)]
+        conn.commit()
+    except Exception as e:
+        print(e)
+        return [(i, 0.0) for i in range(1,13)]
+    finally:
+        conn.close()
+    result = []
+    missing_months = [i for i in range(1,13)]
+    for tuple in res.rows:
+        result.append((int(tuple[0]), float(tuple[1])))
+        missing_months.remove(int(tuple[0]))
+    result = result + [(i,0.0) for i in missing_months]
+    result = sorted(result,key=lambda x : x[0])
+    return result
 
 
 def get_apartment_recommendation(customer_id: int) -> List[Tuple[Apartment, float]]:
@@ -832,3 +876,10 @@ if __name__ == '__main__':
     for owner in res:
         print(owner)
     print(best_value_for_money())
+    print(customer_made_reservation(1001,3,date(2027,5,20),date(2027,5,21),10000.0))
+    print(customer_made_reservation(1001,3,date(2027,5,23),date(2027,5,26),234.0))
+    print(customer_made_reservation(1001,3,date(2027,6,20),date(2027,9,21),10000.0))
+    print(profit_per_month(2027))
+    print(customer_made_reservation(1000,3,date(2029,2,20),date(2029,2,21),100.0))
+    print(customer_reviewed_apartment(1000,3,date(2030,2,22),5,'very good!'))
+
