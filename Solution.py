@@ -128,7 +128,6 @@ def create_tables():
             CREATE VIEW ApartmentPriceRatingAvgFullData AS
             SELECT *
             FROM ApartmentPriceRatingAVG A JOIN Apartment B ON (A.apartment_id = B.id);
-            COMMIT;
             
             CREATE VIEW CustomerReviewsProd AS
             SELECT A.customer_id AS customer_a_id,
@@ -139,14 +138,37 @@ def create_tables():
             FROM CustomerReviews A, CustomerReviews B
             WHERE A.customer_id != B.customer_id AND A.apartment_id = B.apartment_id;
             
-            CREATE VIEW CustomerReviewsAvgRatio AS
+            CREATE VIEW CustomerRatingsAvgRatio AS
             SELECT customer_a_id, customer_b_id, AVG(customer_b_rating*1.0/customer_a_rating) AS avg_ratio
             FROM CustomerReviewsProd A
             GROUP BY customer_a_id, customer_b_id;
             
-
+            CREATE VIEW UnreviewedApartments AS
+            SELECT C.customer_id AS customer_id, A.id AS unreviewed_apartment_id
+            FROM CustomerReviews C , Apartment A
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM CustomerReviews D
+                WHERE D.customer_id = C.customer_id AND A.id = D.apartment_id
+                )
+            GROUP BY customer_id, unreviewed_apartment_id;
+                
+                
+            CREATE VIEW CustomersUnreviewedApartmentsAvgRatio AS
+            SELECT customer_a_id, customer_b_id, avg_ratio, unreviewed_apartment_id
+            FROM CustomerRatingsAvgRatio C JOIN UnreviewedApartments U ON (C.customer_a_id = U.customer_id);
             
+            CREATE VIEW CustomersUnreviewedApartmentsFilter AS
+            SELECT customer_a_id AS customer_id, unreviewed_apartment_id, AVG(rating / avg_ratio) AS expected_rating
+            FROM CustomersUnreviewedApartmentsAvgRatio C JOIN CustomerReviews A ON (C.customer_b_id = A.customer_id AND C.unreviewed_apartment_id = A.apartment_id)
+            GROUP BY customer_a_id, unreviewed_apartment_id;
             
+            CREATE VIEW CustomerApartmentExpectedRating AS 
+            SELECT * 
+            FROM CustomersUnreviewedApartmentsFilter C JOIN Apartment A ON (C.unreviewed_apartment_id = A.id);
+                
+            
+            COMMIT;
         """)
 
     except (DatabaseException.ConnectionInvalid, DatabaseException.database_ini_ERROR,
@@ -836,8 +858,28 @@ def profit_per_month(year: int) -> List[Tuple[int, float]]:
 
 
 def get_apartment_recommendation(customer_id: int) -> List[Tuple[Apartment, float]]:
-    # TODO: implement
-    pass
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("""
+                SELECT *
+                FROM CustomerApartmentExpectedRating
+                WHERE customer_id = {customer_id};
+                """).format(customer_id=sql.Literal(customer_id))
+        rows_affected, res = conn.execute(query)
+        if not rows_affected:
+            return []
+        conn.commit()
+    except Exception as e:
+        print(e)
+        return []
+    finally:
+        conn.close()
+    apartment_recommendations = []
+    for tuple in res:
+        apartment_recommendations.append((Apartment(tuple['unreviewed_apartment_id'], tuple['address'], tuple['city'], tuple['country'], tuple['size']), float(tuple['expected_rating'])))
+    return apartment_recommendations
+
 
 if __name__ == '__main__':
     drop_tables()
@@ -882,4 +924,7 @@ if __name__ == '__main__':
     print(profit_per_month(2027))
     print(customer_made_reservation(1000,3,date(2029,2,20),date(2029,2,21),100.0))
     print(customer_reviewed_apartment(1000,3,date(2030,2,22),5,'very good!'))
+    apartments = get_apartment_recommendation(1001)
+    for apartment in apartments:
+        print(apartment[0], apartment[1])
 
