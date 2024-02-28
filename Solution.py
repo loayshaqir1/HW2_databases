@@ -30,14 +30,14 @@ def create_tables():
             
             DROP TABLE IF EXISTS Apartment CASCADE;
             CREATE TABLE Apartment(
-                id INTEGER NOT NULL,
+                apartment_id INTEGER NOT NULL,
                 address TEXT NOT NULL,
                 city TEXT NOT NULL,
                 country TEXT NOT NULL,
                 city_country TEXT NOT NULL,
                 size INTEGER NOT NULL,
-                CHECK(id > 0), CHECK(size > 0),
-                PRIMARY KEY(id),
+                CHECK(apartment_id > 0), CHECK(size > 0),
+                PRIMARY KEY(apartment_id),
                 UNIQUE(address, city)
             );
             
@@ -59,7 +59,8 @@ def create_tables():
                 CHECK(total_price > 0),
                 CHECK(end_date > start_date),
                 FOREIGN KEY(customer_id) REFERENCES Customer(customer_id) ON DELETE CASCADE,
-                FOREIGN KEY(apartment_id) REFERENCES Apartment(id) ON DELETE CASCADE
+                FOREIGN KEY(apartment_id) REFERENCES Apartment(apartment_id) ON DELETE CASCADE,
+                UNIQUE(apartment_id, start_date)
             );
 
             DROP TABLE IF EXISTS CustomerReviews CASCADE;
@@ -71,7 +72,7 @@ def create_tables():
                 review_text TEXT NOT NULL,
                 CHECK (rating BETWEEN 1 AND 10),
                 FOREIGN KEY(customer_id) REFERENCES Customer(customer_id) ON DELETE CASCADE,
-                FOREIGN KEY(apartment_id) REFERENCES Apartment(id) ON DELETE CASCADE,
+                FOREIGN KEY(apartment_id) REFERENCES Apartment(apartment_id) ON DELETE CASCADE,
                 UNIQUE(customer_id, apartment_id)
             );
 
@@ -82,53 +83,38 @@ def create_tables():
                 apartment_id INTEGER NOT NULL,
                 PRIMARY KEY(apartment_id),
                 FOREIGN KEY(owner_id) REFERENCES Owner(owner_id) ON DELETE CASCADE,
-                FOREIGN KEY(apartment_id) REFERENCES Apartment(id) ON DELETE CASCADE
+                FOREIGN KEY(apartment_id) REFERENCES Apartment(apartment_id) ON DELETE CASCADE
             );
             
-            CREATE VIEW ApartmentOwnersWithName AS
-            SELECT A.owner_id AS owner_id, apartment_id, name
-            FROM ApartmentOwners A JOIN Owner O ON (A.owner_id=O.owner_id);
-            
             CREATE VIEW ApartmentOwnersFullData AS
-            SELECT *
-            FROM ApartmentOwnersWithName A RIGHT OUTER JOIN Apartment B ON(A.apartment_id = B.id);
+            SELECT A.owner_id, O.name AS owner_name, B.*
+            FROM ApartmentOwners A
+            JOIN Owner O ON A.owner_id = O.owner_id
+            JOIN Apartment B ON A.apartment_id = B.apartment_id;
             
             CREATE VIEW ApartmentReviewsFullData AS
-            SELECT owner_id, A.id AS apartment_id, name, customer_id, review_date, rating, review_text
-            FROM ApartmentOwnersFullData A JOIN CustomerReviews C ON (A.id = C.apartment_id);
+            SELECT owner_id, C.apartment_id AS apartment_id, owner_name, customer_id, review_date, rating, review_text
+            FROM ApartmentOwnersFullData A RIGHT OUTER JOIN CustomerReviews C ON (A.apartment_id = C.apartment_id);
             
             CREATE VIEW ApartmentAvgRating AS
             SELECT owner_id, apartment_id, AVG(rating) AS avg_rating
             FROM ApartmentReviewsFullData
             GROUP BY apartment_id, owner_id;
-            
+                
             CREATE VIEW OwnerAvgRating AS
             SELECT owner_id, AVG(avg_rating) AS avg_rating
             FROM ApartmentAvgRating
             GROUP BY owner_id;
-            
-            CREATE VIEW OwnerCustomerReservations AS
-            SELECT owner_id, name AS owner_name, customer_id, A.apartment_id AS apartment_id 
-            FROM ApartmentOwnersWithName A RIGHT OUTER JOIN CustomerReservations C ON (A.apartment_id=C.apartment_id);
-            
-            CREATE VIEW CustomerReservationsWithPricePerNight AS
-            SELECT 
-                customer_id,
-                apartment_id,
-                start_date,
-                end_date,
-                total_price,
-                total_price / (end_date - start_date) AS price_per_night
-            FROM CustomerReservations;
 
+            CREATE VIEW OwnerCustomerReservations AS
+            SELECT owner_id, owner_name, customer_id, A.apartment_id AS apartment_id 
+            FROM ApartmentOwnersFullData A RIGHT OUTER JOIN CustomerReservations C ON (A.apartment_id=C.apartment_id);
+            
             CREATE VIEW ApartmentPriceRatingAVG AS
-            SELECT A.apartment_id AS apartment_id, price_per_night, rating
-            FROM CustomerReservationsWithPricePerNight C LEFT OUTER JOIN ApartmentReviewsFullData A ON (C.apartment_id=A.apartment_id);
-            
-            CREATE VIEW ApartmentPriceRatingAvgFullData AS
-            SELECT *
-            FROM ApartmentPriceRatingAVG A JOIN Apartment B ON (A.apartment_id = B.id);
-            
+            SELECT A.apartment_id AS apartment_id, address, city, country, size ,total_price / (end_date - start_date) AS price_per_night, rating
+            FROM CustomerReservations C LEFT OUTER JOIN ApartmentReviewsFullData A ON (C.apartment_id=A.apartment_id)
+            JOIN Apartment B ON (A.apartment_id = B.apartment_id);
+
             CREATE VIEW CustomerReviewsProd AS
             SELECT A.customer_id AS customer_a_id,
                    B.customer_id AS customer_b_id,
@@ -144,16 +130,15 @@ def create_tables():
             GROUP BY customer_a_id, customer_b_id;
             
             CREATE VIEW UnreviewedApartments AS
-            SELECT C.customer_id AS customer_id, A.id AS unreviewed_apartment_id
+            SELECT C.customer_id AS customer_id, A.apartment_id AS unreviewed_apartment_id
             FROM CustomerReviews C , Apartment A
             WHERE NOT EXISTS (
                 SELECT 1
                 FROM CustomerReviews D
-                WHERE D.customer_id = C.customer_id AND A.id = D.apartment_id
+                WHERE D.customer_id = C.customer_id AND A.apartment_id = D.apartment_id
                 )
             GROUP BY customer_id, unreviewed_apartment_id;
-                
-                
+            
             CREATE VIEW CustomersUnreviewedApartmentsAvgRatio AS
             SELECT customer_a_id, customer_b_id, avg_ratio, unreviewed_apartment_id
             FROM CustomerRatingsAvgRatio C JOIN UnreviewedApartments U ON (C.customer_a_id = U.customer_id);
@@ -162,11 +147,6 @@ def create_tables():
             SELECT customer_a_id AS customer_id, unreviewed_apartment_id, AVG(rating / avg_ratio) AS expected_rating
             FROM CustomersUnreviewedApartmentsAvgRatio C JOIN CustomerReviews A ON (C.customer_b_id = A.customer_id AND C.unreviewed_apartment_id = A.apartment_id)
             GROUP BY customer_a_id, unreviewed_apartment_id;
-            
-            CREATE VIEW CustomerApartmentExpectedRating AS 
-            SELECT * 
-            FROM CustomersUnreviewedApartmentsFilter C JOIN Apartment A ON (C.unreviewed_apartment_id = A.id);
-                
             
             COMMIT;
         """)
@@ -259,7 +239,7 @@ def get_owner(owner_id: int) -> Owner:
                         "FROM Owner " +
                         "WHERE owner_id = {owner_id};").format(owner_id = sql.Literal(owner_id))
         rows_affected, res = conn.execute(query)
-        # If the result of the query returned empty table it means that an owner with the requested id does not exist
+        # If the result of the query returned empty table it means that an owner with the requested apartment_id does not exist
         if not rows_affected:
             return Owner.bad_owner()
         conn.commit()
@@ -301,15 +281,15 @@ def add_apartment(apartment: Apartment) -> ReturnValue:
     conn = None
     try:
         conn = Connector.DBConnector()
-        id = apartment.get_id()
+        apartment_id = apartment.get_id()
         address = apartment.get_address()
         city = apartment.get_city()
         country = apartment.get_country()
         city_country = f"{city}_{country}"
         size = apartment.get_size()
-        query = sql.SQL("INSERT INTO Apartment(id, address, city, country,city_country, size) values({id}, " +
+        query = sql.SQL("INSERT INTO Apartment(apartment_id, address, city, country,city_country, size) values({apartment_id}, " +
                         "{address}, {city}, {country}, {city_country},{size});") \
-            .format(id=sql.Literal(id),
+            .format(apartment_id=sql.Literal(apartment_id),
                     address=sql.Literal(address),
                     city=sql.Literal(city),
                     country=sql.Literal(country),
@@ -329,7 +309,7 @@ def add_apartment(apartment: Apartment) -> ReturnValue:
     return ReturnValue.OK
 
 def res_to_apartment(res: Connector.ResultSet) -> Apartment:
-    return Apartment(res[0]['id'], res[0]['address'], res[0]['city'], res[0]['country'], res[0]['size'])
+    return Apartment(res[0]['apartment_id'], res[0]['address'], res[0]['city'], res[0]['country'], res[0]['size'])
 
 def get_apartment(apartment_id: int) -> Apartment:
     conn = None
@@ -337,9 +317,9 @@ def get_apartment(apartment_id: int) -> Apartment:
         conn = Connector.DBConnector()
         query = sql.SQL("SELECT * " +
                         "FROM Apartment " +
-                        "WHERE id = {apartment_id};").format(apartment_id = sql.Literal(apartment_id))
+                        "WHERE apartment_id = {apartment_id};").format(apartment_id = sql.Literal(apartment_id))
         rows_affected, res = conn.execute(query)
-        # If the result of the query returned empty table it means that an apartment with the requested id does not exist
+        # If the result of the query returned empty table it means that an apartment with the requested apartment_id does not exist
         if not rows_affected:
             return Apartment.bad_apartment()
         conn.commit()
@@ -356,7 +336,7 @@ def delete_apartment(apartment_id: int) -> ReturnValue:
     conn = None
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("DELETE FROM Apartment WHERE id = {apartment_id};").format(apartment_id=sql.Literal(apartment_id))
+        query = sql.SQL("DELETE FROM Apartment WHERE apartment_id = {apartment_id};").format(apartment_id=sql.Literal(apartment_id))
         rows_affected, res = conn.execute(query)
         if not rows_affected:
             return ReturnValue.NOT_EXISTS
@@ -405,7 +385,7 @@ def get_customer(customer_id: int) -> Customer:
                         "FROM Customer " +
                         "WHERE customer_id = {customer_id};").format(customer_id=sql.Literal(customer_id))
         rows_affected, res = conn.execute(query)
-        # If the result of the query returned empty table it means that a customer with the requested id does not exist
+        # If the result of the query returned empty table it means that a customer with the requested apartment_id does not exist
         if not rows_affected:
             return Customer.bad_customer()
         conn.commit()
@@ -632,7 +612,7 @@ def get_apartment_owner(apartment_id: int) -> Owner:
                 """).format(apartment_id = sql.Literal(apartment_id))
 
         rows_affected, res = conn.execute(query)
-        # If the result of the query returned empty table it means that an apartment with the requested id does not exist
+        # If the result of the query returned empty table it means that an apartment with the requested apartment_id does not exist
         if not rows_affected:
             return Owner.bad_owner()
         conn.commit()
@@ -649,7 +629,7 @@ def get_owner_apartments(owner_id: int) -> List[Apartment]:
     try:
         conn = Connector.DBConnector()
         query = sql.SQL("""
-                    SELECT id, address, city, country, size
+                    SELECT apartment_id, address, city, country, size
                     FROM ApartmentOwnersFullData
                     WHERE owner_id = {owner_id};
                 """).format(owner_id=sql.Literal(owner_id))
@@ -720,9 +700,9 @@ def get_top_customer() -> Customer:
     try:
         conn = Connector.DBConnector()
         query = sql.SQL("""
-                    SELECT customer_id
-                    FROM OwnerCustomerReservations
-                    GROUP BY customer_id
+                    SELECT A.customer_id AS customer_id, customer_name
+                    FROM Customer A JOIN CustomerReservations B ON (A.customer_id = B.customer_id)
+                    GROUP BY A.customer_id, customer_name
                     ORDER BY COUNT(*) DESC, customer_id ASC
                     LIMIT 1;
                 """).format()
@@ -731,12 +711,12 @@ def get_top_customer() -> Customer:
         if not rows_affected:
             return Customer.bad_customer()
         conn.commit()
-    except:
+    except Exception as e:
         return Customer.bad_customer()
     finally:
         conn.close()
 
-    return res[0]['customer_id']
+    return res_to_customer(res)
 
 
 def reservations_per_owner() -> List[Tuple[str, int]]:
@@ -768,9 +748,9 @@ def get_all_location_owners() -> List[Owner]:
     try:
         conn = Connector.DBConnector()
         query = sql.SQL("""
-                    SELECT owner_id, name
+                    SELECT owner_id, owner_name
                     FROM ApartmentOwnersFullData
-                    GROUP BY owner_id, name
+                    GROUP BY owner_id, owner_name
                     HAVING COUNT (DISTINCT city_country) = (
                         SELECT COUNT(DISTINCT city_country)
                         FROM Apartment
@@ -789,7 +769,7 @@ def get_all_location_owners() -> List[Owner]:
 
     all_location_owners = []
     for row in res:
-        all_location_owners.append(Owner(row['owner_id'], row['name']))
+        all_location_owners.append(Owner(row['owner_id'], row['owner_name']))
     return all_location_owners
 
 
@@ -797,17 +777,17 @@ def best_value_for_money() -> Apartment:
     conn = None
     try:
         conn = Connector.DBConnector()
-        # We can use the aggregation funcitons here as the apartment id has one address and one city etc...
+        # We can use the aggregation functions here as the apartment apartment_id has one address and one city etc...
         query = sql.SQL("""
                     SELECT 
-                        apartment_id AS id, 
+                        apartment_id AS apartment_id, 
                         MAX(address) AS address, 
                         MAX(city) AS city, 
                         MAX(country) AS country, 
                         MAX(size) AS size, 
                         AVG(rating) / AVG(price_per_night) AS value_for_money
                     FROM 
-                        ApartmentPriceRatingAvgFullData
+                        ApartmentPriceRatingAvg
                     GROUP BY 
                         apartment_id
                     ORDER BY 
@@ -863,7 +843,7 @@ def get_apartment_recommendation(customer_id: int) -> List[Tuple[Apartment, floa
         conn = Connector.DBConnector()
         query = sql.SQL("""
                 SELECT *
-                FROM CustomerApartmentExpectedRating
+                FROM CustomersUnreviewedApartmentsFilter C JOIN Apartment A ON (C.unreviewed_apartment_id = A.apartment_id)
                 WHERE customer_id = {customer_id};
                 """).format(customer_id=sql.Literal(customer_id))
         rows_affected, res = conn.execute(query)
@@ -884,6 +864,18 @@ def get_apartment_recommendation(customer_id: int) -> List[Tuple[Apartment, floa
 if __name__ == '__main__':
     drop_tables()
     create_tables()
+    # print(add_apartment(Apartment(1, 'a', 'haifa', 'israel', 100)))
+    # print(add_customer(Customer(1000,'kamil')))
+    # print(add_customer(Customer(1001, 'loay')))
+    # print(customer_made_reservation(1000, 1, date(2024, 2, 20), date(2024, 2, 23), 100))
+    # print(customer_made_reservation(1000, 1, date(2025, 2, 20), date(2025, 2, 23), 100))
+    # print(customer_reviewed_apartment(1000, 1, date(2025, 1, 1), 4, 'not bad'))
+    # print(customer_reviewed_apartment(1001, 1, date(2026, 1, 1), 2, 'not bad'))
+    # print(get_apartment_rating(1))
+    # print(add_apartment(Apartment(2, 'aa', 'haifa', 'israel', 100)))
+    # print(get_apartment_rating(2))
+    # print(get_top_customer())
+    # print(get_all_location_owners())
     print(add_apartment(Apartment(1,'a','haifa','israel',100)))
     print(add_owner(Owner(10,'loay')))
     print(owner_owns_apartment(10,1))
@@ -927,4 +919,7 @@ if __name__ == '__main__':
     apartments = get_apartment_recommendation(1001)
     for apartment in apartments:
         print(apartment[0], apartment[1])
+    res = get_owner_apartments(11)
+    for apt in res:
+        print(apt)
 
