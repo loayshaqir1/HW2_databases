@@ -193,7 +193,17 @@ def drop_tables():
                      "DROP TABLE IF EXISTS CustomerReservations CASCADE; \n" +
                      "DROP TABLE IF EXISTS CustomerReviews CASCADE; \n" +
                      "DROP TABLE IF EXISTS ApartmentOwners CASCADE; \n" +
-                     "DROP VIEW IF EXISTS ApartmentOwnersWithName CASCADE; \n" +
+                     "DROP VIEW IF EXISTS ApartmentOwnersFullData CASCADE; \n" +
+                     "DROP VIEW IF EXISTS ApartmentReviewsFullData CASCADE; \n" +
+                     "DROP VIEW IF EXISTS ApartmentAvgRating CASCADE; \n" +
+                     "DROP VIEW IF EXISTS OwnerAvgRating CASCADE; \n" +
+                     "DROP VIEW IF EXISTS OwnerCustomerReservations CASCADE; \n" +
+                     "DROP VIEW IF EXISTS ApartmentPriceRatingAVG CASCADE; \n" +
+                     "DROP VIEW IF EXISTS CustomerReviewsProd CASCADE; \n" +
+                     "DROP VIEW IF EXISTS CustomerRatingsAvgRatio CASCADE; \n" +
+                     "DROP VIEW IF EXISTS UnreviewedApartments CASCADE; \n" +
+                     "DROP VIEW IF EXISTS CustomersUnreviewedApartmentsAvgRatio CASCADE; \n" +
+                     "DROP VIEW IF EXISTS CustomersUnreviewedApartmentsFilter CASCADE; \n" +
                      "COMMIT;")
     except (DatabaseException.ConnectionInvalid, DatabaseException.database_ini_ERROR,
             DatabaseException.UNKNOWN_ERROR) as e:
