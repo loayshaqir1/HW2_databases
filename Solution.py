@@ -23,7 +23,7 @@ def create_tables():
             DROP TABLE IF EXISTS Owner CASCADE;
             CREATE TABLE Owner(
                 owner_id INTEGER NOT NULL,
-                name TEXT NOT NULL,
+                owner_name TEXT NOT NULL,
                 PRIMARY KEY(owner_id),
                 CHECK(owner_id > 0)
             );
@@ -38,7 +38,7 @@ def create_tables():
                 size INTEGER NOT NULL,
                 CHECK(apartment_id > 0), CHECK(size > 0),
                 PRIMARY KEY(apartment_id),
-                UNIQUE(address, city)
+                UNIQUE(address, city,country)
             );
             
             DROP TABLE IF EXISTS Customer CASCADE;
@@ -87,7 +87,7 @@ def create_tables():
             );
             
             CREATE VIEW ApartmentOwnersFullData AS
-            SELECT A.owner_id, O.name AS owner_name, B.*
+            SELECT A.owner_id, O.owner_name AS owner_name, B.*
             FROM ApartmentOwners A
             JOIN Owner O ON A.owner_id = O.owner_id
             JOIN Apartment B ON A.apartment_id = B.apartment_id;
@@ -210,18 +210,18 @@ def add_owner(owner: Owner) -> ReturnValue:
     try:
         conn = Connector.DBConnector()
         owner_id = owner.get_owner_id()
-        name = owner.get_owner_name()
-        query = sql.SQL("INSERT INTO Owner(owner_id,name) values({owner_id} , {name});").format(owner_id=sql.Literal(owner_id), name = sql.Literal(name))
+        owner_name = owner.get_owner_name()
+        query = sql.SQL("INSERT INTO Owner(owner_id,owner_name) values({owner_id} , {owner_name});").format(owner_id=sql.Literal(owner_id), owner_name = sql.Literal(owner_name))
         conn.execute(query)
         conn.commit()
     except (DatabaseException.NOT_NULL_VIOLATION,DatabaseException.CHECK_VIOLATION) as e:
-        print(e)
+        # print(e)
         return ReturnValue.BAD_PARAMS
     except DatabaseException.UNIQUE_VIOLATION as e:
-        print(e)
+        # print(e)
         return ReturnValue.ALREADY_EXISTS
     except Exception as e:
-        print(e)
+        # print(e)
         return ReturnValue.ERROR
     finally:
         conn.close()
@@ -229,7 +229,7 @@ def add_owner(owner: Owner) -> ReturnValue:
     return ReturnValue.OK
 
 def res_to_owner(res: Connector.ResultSet) -> Owner:
-    return Owner(res[0]['owner_id'], res[0]['name'])
+    return Owner(res[0]['owner_id'], res[0]['owner_name'])
 
 def get_owner(owner_id: int) -> Owner:
     conn = None
@@ -253,6 +253,8 @@ def get_owner(owner_id: int) -> Owner:
 
 
 def delete_owner(owner_id: int) -> ReturnValue:
+    if not owner_id or owner_id <= 0:
+        return ReturnValue.BAD_PARAMS
     conn = None
     try:
         conn = Connector.DBConnector()
@@ -333,6 +335,8 @@ def get_apartment(apartment_id: int) -> Apartment:
 
 
 def delete_apartment(apartment_id: int) -> ReturnValue:
+    if not apartment_id or apartment_id <= 0:
+        return ReturnValue.BAD_PARAMS
     conn = None
     try:
         conn = Connector.DBConnector()
@@ -399,6 +403,8 @@ def get_customer(customer_id: int) -> Customer:
 
 
 def delete_customer(customer_id: int) -> ReturnValue:
+    if not customer_id or customer_id <= 0:
+        return ReturnValue.BAD_PARAMS
     conn = None
     try:
         conn = Connector.DBConnector()
@@ -554,6 +560,8 @@ def customer_updated_review(customer_id: int, apartment_id:int, update_date: dat
     return ReturnValue.OK
 
 def owner_owns_apartment(owner_id: int, apartment_id: int) -> ReturnValue:
+    if not owner_id or not apartment_id or owner_id <= 0 or apartment_id <= 0:
+        return ReturnValue.BAD_PARAMS
     conn = None
     try:
         conn = Connector.DBConnector()
@@ -581,6 +589,8 @@ def owner_owns_apartment(owner_id: int, apartment_id: int) -> ReturnValue:
 
 
 def owner_doesnt_own_apartment(owner_id: int, apartment_id: int) -> ReturnValue:
+    if not owner_id or not apartment_id or owner_id <= 0 or apartment_id <= 0:
+        return ReturnValue.BAD_PARAMS
     conn = None
     try:
         conn = Connector.DBConnector()
@@ -606,8 +616,8 @@ def get_apartment_owner(apartment_id: int) -> Owner:
     try:
         conn = Connector.DBConnector()
         query = sql.SQL("""
-                    SELECT owner_id, name
-                    FROM ApartmentOwnersWithName
+                    SELECT owner_id, owner_name
+                    FROM ApartmentOwnersFullData
                     WHERE apartment_id = {apartment_id};
                 """).format(apartment_id = sql.Literal(apartment_id))
 
@@ -742,7 +752,6 @@ def reservations_per_owner() -> List[Tuple[str, int]]:
 
 
 # ---------------------------------- ADVANCED API: ----------------------------------
-# Todo: currently not fully counting unique (city, country) pairs in ApartmentOwnersFullData
 def get_all_location_owners() -> List[Owner]:
     conn = None
     try:
