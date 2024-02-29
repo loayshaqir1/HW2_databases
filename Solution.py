@@ -34,7 +34,6 @@ def create_tables():
                 address TEXT NOT NULL,
                 city TEXT NOT NULL,
                 country TEXT NOT NULL,
-                city_country TEXT NOT NULL,
                 size INTEGER NOT NULL,
                 CHECK(apartment_id > 0), CHECK(size > 0),
                 PRIMARY KEY(apartment_id),
@@ -287,15 +286,13 @@ def add_apartment(apartment: Apartment) -> ReturnValue:
         address = apartment.get_address()
         city = apartment.get_city()
         country = apartment.get_country()
-        city_country = f"{city}_{country}"
         size = apartment.get_size()
-        query = sql.SQL("INSERT INTO Apartment(apartment_id, address, city, country,city_country, size) values({apartment_id}, " +
-                        "{address}, {city}, {country}, {city_country},{size});") \
+        query = sql.SQL("INSERT INTO Apartment(apartment_id, address, city, country, size) values({apartment_id}, " +
+                        "{address}, {city}, {country},{size});") \
             .format(apartment_id=sql.Literal(apartment_id),
                     address=sql.Literal(address),
                     city=sql.Literal(city),
                     country=sql.Literal(country),
-                    city_country=sql.Literal(city_country),
                     size=sql.Literal(size))
         conn.execute(query)
         conn.commit()
@@ -760,8 +757,8 @@ def get_all_location_owners() -> List[Owner]:
                     SELECT owner_id, owner_name
                     FROM ApartmentOwnersFullData
                     GROUP BY owner_id, owner_name
-                    HAVING COUNT (DISTINCT city_country) = (
-                        SELECT COUNT(DISTINCT city_country)
+                    HAVING COUNT (DISTINCT (city,country)) = (
+                        SELECT COUNT(DISTINCT (city,country))
                         FROM Apartment
                     );
                 """).format()
