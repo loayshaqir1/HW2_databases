@@ -147,6 +147,13 @@ def create_tables():
             FROM CustomersUnreviewedApartmentsAvgRatio C JOIN CustomerReviews A ON (C.customer_b_id = A.customer_id AND C.unreviewed_apartment_id = A.apartment_id)
             GROUP BY customer_a_id, unreviewed_apartment_id;
             
+            CREATE VIEW TopCustomer AS
+            SELECT A.customer_id AS customer_id, customer_name
+                    FROM Customer A JOIN CustomerReservations B ON (A.customer_id = B.customer_id)
+                    GROUP BY A.customer_id, customer_name
+                    ORDER BY COUNT(*) DESC, customer_id ASC
+                    LIMIT 1;
+            
             COMMIT;
         """)
 
@@ -165,14 +172,16 @@ def clear_tables():
     conn = None
     try:
         conn = Connector.DBConnector()
-        conn.execute("Begin;\n" +
-                     "DELETE FROM Owner;\n" +
-                     "DELETE FROM Apartment;\n" +
-                     "DELETE FROM Customer;\n" +
-                     "DELETE FROM CustomerReservations;\n" +
-                     "DELETE FROM CustomerReviews;\n" +
-                     "DELETE FROM ApartmentOwners;\n" +
-                     "COMMIT;")
+        conn.execute("""
+                     Begin;
+                     DELETE FROM Owner;
+                     DELETE FROM Apartment;
+                     DELETE FROM Customer;
+                     DELETE FROM CustomerReservations;
+                     DELETE FROM CustomerReviews;
+                     DELETE FROM ApartmentOwners;
+                     COMMIT;
+                     """)
     except (DatabaseException.ConnectionInvalid, DatabaseException.database_ini_ERROR,
             DatabaseException.UNKNOWN_ERROR) as e:
         return ReturnValue.ERROR
@@ -186,25 +195,27 @@ def drop_tables():
     conn = None
     try:
         conn = Connector.DBConnector()
-        conn.execute("Begin;\n" +
-                     "DROP TABLE IF EXISTS Owner CASCADE; \n" +
-                     "DROP TABLE IF EXISTS Apartment CASCADE; \n" +
-                     "DROP TABLE IF EXISTS Customer CASCADE; \n" +
-                     "DROP TABLE IF EXISTS CustomerReservations CASCADE; \n" +
-                     "DROP TABLE IF EXISTS CustomerReviews CASCADE; \n" +
-                     "DROP TABLE IF EXISTS ApartmentOwners CASCADE; \n" +
-                     "DROP VIEW IF EXISTS ApartmentOwnersFullData CASCADE; \n" +
-                     "DROP VIEW IF EXISTS ApartmentReviewsFullData CASCADE; \n" +
-                     "DROP VIEW IF EXISTS ApartmentAvgRating CASCADE; \n" +
-                     "DROP VIEW IF EXISTS OwnerAvgRating CASCADE; \n" +
-                     "DROP VIEW IF EXISTS OwnerCustomerReservations CASCADE; \n" +
-                     "DROP VIEW IF EXISTS ApartmentPriceRatingAVG CASCADE; \n" +
-                     "DROP VIEW IF EXISTS CustomerReviewsProd CASCADE; \n" +
-                     "DROP VIEW IF EXISTS CustomerRatingsAvgRatio CASCADE; \n" +
-                     "DROP VIEW IF EXISTS UnreviewedApartments CASCADE; \n" +
-                     "DROP VIEW IF EXISTS CustomersUnreviewedApartmentsAvgRatio CASCADE; \n" +
-                     "DROP VIEW IF EXISTS CustomersUnreviewedApartmentsFilter CASCADE; \n" +
-                     "COMMIT;")
+        conn.execute("""
+                     Begin;
+                     DROP TABLE IF EXISTS Owner CASCADE;
+                     DROP TABLE IF EXISTS Apartment CASCADE;
+                     DROP TABLE IF EXISTS Customer CASCADE;
+                     DROP TABLE IF EXISTS CustomerReservations CASCADE;
+                     DROP TABLE IF EXISTS CustomerReviews CASCADE;
+                     DROP TABLE IF EXISTS ApartmentOwners CASCADE;
+                     DROP VIEW IF EXISTS ApartmentOwnersFullData CASCADE;
+                     DROP VIEW IF EXISTS ApartmentReviewsFullData CASCADE;
+                     DROP VIEW IF EXISTS ApartmentAvgRating CASCADE;
+                     DROP VIEW IF EXISTS OwnerAvgRating CASCADE;
+                     DROP VIEW IF EXISTS OwnerCustomerReservations CASCADE;
+                     DROP VIEW IF EXISTS ApartmentPriceRatingAVG CASCADE;
+                     DROP VIEW IF EXISTS CustomerReviewsProd CASCADE;
+                     DROP VIEW IF EXISTS CustomerRatingsAvgRatio CASCADE;
+                     DROP VIEW IF EXISTS UnreviewedApartments CASCADE;
+                     DROP VIEW IF EXISTS CustomersUnreviewedApartmentsAvgRatio CASCADE;
+                     DROP VIEW IF EXISTS CustomersUnreviewedApartmentsFilter CASCADE;
+                     COMMIT;
+                     """)
     except (DatabaseException.ConnectionInvalid, DatabaseException.database_ini_ERROR,
             DatabaseException.UNKNOWN_ERROR) as e:
         return ReturnValue.ERROR
@@ -463,7 +474,7 @@ def customer_made_reservation(customer_id: int, apartment_id: int, start_date: d
     except DatabaseException.FOREIGN_KEY_VIOLATION as e:
         return ReturnValue.NOT_EXISTS
     except Exception as e:
-        print(e)
+        # print(e)
         return ReturnValue.ERROR
 
     finally:
@@ -476,10 +487,12 @@ def customer_cancelled_reservation(customer_id: int, apartment_id: int, start_da
     conn = None
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("DELETE FROM CustomerReservations WHERE customer_id = {customer_id} AND apartment_id = {apartment_id} AND start_date = {start_date};") \
-            .format(customer_id=sql.Literal(customer_id),
-                    apartment_id=sql.Literal(apartment_id),
-                    start_date=sql.Literal(start_date))
+        query = sql.SQL("""
+                            DELETE FROM CustomerReservations
+                            WHERE customer_id = {customer_id} AND apartment_id = {apartment_id} AND start_date = {start_date};
+                            """).format(customer_id=sql.Literal(customer_id),
+                                        apartment_id=sql.Literal(apartment_id),
+                                        start_date=sql.Literal(start_date))
         rows_affected, res = conn.execute(query)
         if not rows_affected:
             return ReturnValue.NOT_EXISTS
@@ -717,11 +730,8 @@ def get_top_customer() -> Customer:
     try:
         conn = Connector.DBConnector()
         query = sql.SQL("""
-                    SELECT A.customer_id AS customer_id, customer_name
-                    FROM Customer A JOIN CustomerReservations B ON (A.customer_id = B.customer_id)
-                    GROUP BY A.customer_id, customer_name
-                    ORDER BY COUNT(*) DESC, customer_id ASC
-                    LIMIT 1;
+                    SELECT *
+                    FROM TopCustomer;
                 """).format()
 
         rows_affected, res = conn.execute(query)
@@ -917,7 +927,7 @@ if __name__ == '__main__':
     print(customer_made_reservation(1001,3,date(2026,2,20),date(2026,2,21),100.0))
     print(get_top_customer())
     print(customer_made_reservation(1001,3,date(2027,2,20),date(2027,2,21),100.0))
-    print(get_top_customer())
+    print("Top Customer", get_top_customer())
     print(reservations_per_owner())
     print(add_apartment(Apartment(4,'d','Tel aviv','Israel',40)))
     print(get_all_location_owners())
