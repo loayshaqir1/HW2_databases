@@ -57,6 +57,8 @@ def create_tables():
                 total_price DOUBLE PRECISION NOT NULL,
                 CHECK(total_price > 0),
                 CHECK(end_date > start_date),
+                CHECK(customer_id > 0),
+                CHECK(apartment_id > 0),
                 FOREIGN KEY(customer_id) REFERENCES Customer(customer_id) ON DELETE CASCADE,
                 FOREIGN KEY(apartment_id) REFERENCES Apartment(apartment_id) ON DELETE CASCADE,
                 UNIQUE(apartment_id, start_date)
@@ -70,6 +72,8 @@ def create_tables():
                 rating INTEGER NOT NULL,
                 review_text TEXT NOT NULL,
                 CHECK (rating BETWEEN 1 AND 10),
+                CHECK(customer_id > 0),
+                CHECK(apartment_id > 0),
                 FOREIGN KEY(customer_id) REFERENCES Customer(customer_id) ON DELETE CASCADE,
                 FOREIGN KEY(apartment_id) REFERENCES Apartment(apartment_id) ON DELETE CASCADE,
                 UNIQUE(customer_id, apartment_id)
@@ -214,6 +218,7 @@ def drop_tables():
                      DROP VIEW IF EXISTS UnreviewedApartments CASCADE;
                      DROP VIEW IF EXISTS CustomersUnreviewedApartmentsAvgRatio CASCADE;
                      DROP VIEW IF EXISTS CustomersUnreviewedApartmentsFilter CASCADE;
+                     DROP VIEW IF EXISTS TopCustomer CASCADE;
                      COMMIT;
                      """)
     except (DatabaseException.ConnectionInvalid, DatabaseException.database_ini_ERROR,
@@ -454,8 +459,8 @@ def customer_made_reservation(customer_id: int, apartment_id: int, start_date: d
                 FROM CustomerReservations
                 WHERE apartment_id = {apartment_id} 
                 AND ( ({start_date} >= start_date AND {end_date} <= end_date) OR 
-                          ({end_date} >= start_date AND {end_date} <= end_date) OR
-                          ({start_date} >= start_date AND {start_date} <= end_date))
+                          ({end_date} > start_date AND {end_date} <= end_date AND {start_date} <= start_date) OR
+                          ({start_date} >= start_date AND {start_date} < end_date AND {end_date} >= end_date))
                 
             );
         """).format(
@@ -484,6 +489,8 @@ def customer_made_reservation(customer_id: int, apartment_id: int, start_date: d
 
 
 def customer_cancelled_reservation(customer_id: int, apartment_id: int, start_date: date) -> ReturnValue:
+    if not customer_id or customer_id <= 0 or not apartment_id or apartment_id <= 0:
+        return ReturnValue.BAD_PARAMS
     conn = None
     try:
         conn = Connector.DBConnector()
@@ -525,7 +532,7 @@ def customer_reviewed_apartment(customer_id: int, apartment_id: int, review_date
                 SELECT 1
                 FROM CustomerReservations
                 WHERE apartment_id = {apartment_id} 
-                AND ( {review_date} >= end_date)
+                AND ( {review_date} >= end_date) AND ({customer_id} = customer_id)
             );
         """).format(customer_id=sql.Literal(customer_id),
                     apartment_id=sql.Literal(apartment_id),
@@ -535,12 +542,17 @@ def customer_reviewed_apartment(customer_id: int, apartment_id: int, review_date
         rows_affected, _ = conn.execute(query)
         # Check if the apartment isn't available at the specified date
         if not rows_affected:
+            # Check if need to return bad params before this
+            if not customer_id or customer_id <= 0 or not apartment_id or apartment_id <= 0 or rating < 1 or rating > 10:
+                return ReturnValue.BAD_PARAMS
             return ReturnValue.NOT_EXISTS
         conn.commit()
     except (DatabaseException.NOT_NULL_VIOLATION, DatabaseException.CHECK_VIOLATION) as e:
         return ReturnValue.BAD_PARAMS
     except DatabaseException.FOREIGN_KEY_VIOLATION as e:
         return ReturnValue.NOT_EXISTS
+    except DatabaseException.UNIQUE_VIOLATION as e:
+        return ReturnValue.ALREADY_EXISTS
     except Exception as e:
         return ReturnValue.ERROR
 
@@ -564,7 +576,9 @@ def customer_updated_review(customer_id: int, apartment_id:int, update_date: dat
                     new_text=sql.Literal(new_text))
         rows_affected, _ = conn.execute(query)
         # Check if the customer has no previous review for the apartment
-        if not rows_affected:
+        if not rows_affected:            # Check if need to return bad params before this
+            if not customer_id or customer_id <= 0 or not apartment_id or apartment_id <= 0 or new_rating < 1 or new_rating > 10:
+                return ReturnValue.BAD_PARAMS
             return ReturnValue.NOT_EXISTS
         conn.commit()
     except (DatabaseException.NOT_NULL_VIOLATION, DatabaseException.CHECK_VIOLATION) as e:
@@ -608,7 +622,7 @@ def owner_owns_apartment(owner_id: int, apartment_id: int) -> ReturnValue:
     return ReturnValue.OK
 
 
-def owner_doesnt_own_apartment(owner_id: int, apartment_id: int) -> ReturnValue:
+def owner_drops_apartment(owner_id: int, apartment_id: int) -> ReturnValue:
     if not owner_id or not apartment_id or owner_id <= 0 or apartment_id <= 0:
         return ReturnValue.BAD_PARAMS
     conn = None
