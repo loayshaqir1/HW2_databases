@@ -113,6 +113,12 @@ def create_tables():
             SELECT owner_id, owner_name, customer_id, A.apartment_id AS apartment_id 
             FROM ApartmentOwnersFullData A RIGHT OUTER JOIN CustomerReservations C ON (A.apartment_id=C.apartment_id);
             
+            CREATE VIEW OwnerReservations AS
+            SELECT O.owner_name, COUNT(OCR.owner_id) AS reservations
+            FROM Owner O
+            LEFT JOIN OwnerCustomerReservations OCR ON O.owner_id = OCR.owner_id
+            GROUP BY O.owner_name, O.owner_id;
+                        
             CREATE VIEW ApartmentPriceRatingAVG AS
             SELECT A.apartment_id AS apartment_id, address, city, country, size ,total_price / (end_date - start_date) AS price_per_night, rating
             FROM CustomerReservations C LEFT OUTER JOIN ApartmentReviewsFullData A ON (C.apartment_id=A.apartment_id)
@@ -765,9 +771,8 @@ def reservations_per_owner() -> List[Tuple[str, int]]:
     try:
         conn = Connector.DBConnector()
         query = sql.SQL("""
-                    SELECT owner_name, COUNT(*) AS reservations
-                    FROM OwnerCustomerReservations
-                    GROUP BY owner_name, owner_id;
+                    SELECT *
+                    FROM OwnerReservations;
                 """).format()
 
         rows_affected, res = conn.execute(query)
@@ -780,8 +785,6 @@ def reservations_per_owner() -> List[Tuple[str, int]]:
         conn.close()
 
     return res.rows
-
-
 # ---------------------------------- ADVANCED API: ----------------------------------
 def get_all_location_owners() -> List[Owner]:
     conn = None
