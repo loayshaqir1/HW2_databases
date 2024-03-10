@@ -100,14 +100,17 @@ def create_tables():
             FROM ApartmentOwnersFullData A RIGHT OUTER JOIN CustomerReviews C ON (A.apartment_id = C.apartment_id);
             
             CREATE VIEW ApartmentAvgRating AS
-            SELECT owner_id, apartment_id, AVG(rating) AS avg_rating
-            FROM ApartmentReviewsFullData
-            GROUP BY apartment_id, owner_id;
+            SELECT A.owner_id AS owner_id, A.apartment_id AS apartment_id, COALESCE(AVG(rating), 0) AS avg_rating
+            FROM ApartmentOwners A LEFT JOIN 
+            ApartmentReviewsFullData B ON (A.apartment_id = B.apartment_id)
+            GROUP BY A.apartment_id, A.owner_id;
                 
             CREATE VIEW OwnerAvgRating AS
-            SELECT owner_id, AVG(avg_rating) AS avg_rating
-            FROM ApartmentAvgRating
-            GROUP BY owner_id;
+            SELECT A.owner_id, COALESCE(AVG(AR.avg_rating), 0) AS avg_rating
+            FROM Owner A
+            LEFT JOIN ApartmentAvgRating AR ON A.owner_id = AR.owner_id
+            GROUP BY A.owner_id;
+
 
             CREATE VIEW OwnerCustomerReservations AS
             SELECT owner_id, owner_name, customer_id, A.apartment_id AS apartment_id 
@@ -120,9 +123,9 @@ def create_tables():
             GROUP BY O.owner_name, O.owner_id;
                         
             CREATE VIEW ApartmentPriceRatingAVG AS
-            SELECT A.apartment_id AS apartment_id, address, city, country, size ,total_price / (end_date - start_date) AS price_per_night, rating
-            FROM CustomerReservations C LEFT OUTER JOIN ApartmentReviewsFullData A ON (C.apartment_id=A.apartment_id)
-            JOIN Apartment B ON (A.apartment_id = B.apartment_id);
+            SELECT B.apartment_id AS apartment_id, address, city, country, size ,total_price / (end_date - start_date) AS price_per_night, COALESCE(rating, 0) AS rating
+            FROM CustomerReservations C FULL OUTER JOIN ApartmentReviewsFullData A ON (C.apartment_id=A.apartment_id)
+            JOIN Apartment B ON (C.apartment_id = B.apartment_id);
 
             CREATE VIEW CustomerReviewsProd AS
             SELECT A.customer_id AS customer_a_id,
@@ -134,7 +137,7 @@ def create_tables():
             WHERE A.customer_id != B.customer_id AND A.apartment_id = B.apartment_id;
             
             CREATE VIEW CustomerRatingsAvgRatio AS
-            SELECT customer_a_id, customer_b_id, AVG(customer_b_rating*1.0/customer_a_rating) AS avg_ratio
+            SELECT customer_a_id, customer_b_id, AVG(customer_a_rating*1.0/customer_b_rating) AS avg_ratio
             FROM CustomerReviewsProd A
             GROUP BY customer_a_id, customer_b_id;
             
@@ -153,7 +156,7 @@ def create_tables():
             FROM CustomerRatingsAvgRatio C JOIN UnreviewedApartments U ON (C.customer_a_id = U.customer_id);
             
             CREATE VIEW CustomersUnreviewedApartmentsFilter AS
-            SELECT customer_a_id AS customer_id, unreviewed_apartment_id, AVG(rating / avg_ratio) AS expected_rating
+            SELECT customer_a_id AS customer_id, unreviewed_apartment_id, AVG(GREATEST(LEAST(rating*avg_ratio, 10), 1)) AS expected_rating
             FROM CustomersUnreviewedApartmentsAvgRatio C JOIN CustomerReviews A ON (C.customer_b_id = A.customer_id AND C.unreviewed_apartment_id = A.apartment_id)
             GROUP BY customer_a_id, unreviewed_apartment_id;
             
@@ -163,6 +166,20 @@ def create_tables():
                     GROUP BY A.customer_id, customer_name
                     ORDER BY COUNT(*) DESC, customer_id ASC
                     LIMIT 1;
+            
+            CREATE VIEW total_distinct_cities AS
+            SELECT COUNT(DISTINCT (city, country)) AS total_cities
+            FROM Apartment;
+
+            CREATE VIEW distinct_cities_per_owner AS
+            SELECT owner_id, owner_name, COUNT(DISTINCT (Apartment.city, Apartment.country)) AS cities_per_owner
+            FROM ApartmentOwnersFullData
+            JOIN Apartment ON ApartmentOwnersFullData.apartment_id = Apartment.apartment_id
+            GROUP BY owner_id, owner_name;
+
+            CREATE VIEW CustomerUnreviewedApartmentsFullData AS
+            SELECT *
+            FROM CustomersUnreviewedApartmentsFilter C JOIN Apartment A ON (C.unreviewed_apartment_id = A.apartment_id);
             
             COMMIT;
         """)
@@ -218,6 +235,7 @@ def drop_tables():
                      DROP VIEW IF EXISTS ApartmentAvgRating CASCADE;
                      DROP VIEW IF EXISTS OwnerAvgRating CASCADE;
                      DROP VIEW IF EXISTS OwnerCustomerReservations CASCADE;
+                     DROP VIEW IF EXISTS OwnerReservations CASCADE;
                      DROP VIEW IF EXISTS ApartmentPriceRatingAVG CASCADE;
                      DROP VIEW IF EXISTS CustomerReviewsProd CASCADE;
                      DROP VIEW IF EXISTS CustomerRatingsAvgRatio CASCADE;
@@ -225,6 +243,9 @@ def drop_tables():
                      DROP VIEW IF EXISTS CustomersUnreviewedApartmentsAvgRatio CASCADE;
                      DROP VIEW IF EXISTS CustomersUnreviewedApartmentsFilter CASCADE;
                      DROP VIEW IF EXISTS TopCustomer CASCADE;
+                     DROP VIEW IF EXISTS CustomerUnreviewedApartmentsFullData CASCADE;
+                     DROP VIEW IF EXISTS distinct_cities_per_owner CASCADE;
+                     DROP VIEW IF EXISTS total_distinct_cities CASCADE;
                      COMMIT;
                      """)
     except (DatabaseException.ConnectionInvalid, DatabaseException.database_ini_ERROR,
@@ -792,12 +813,8 @@ def get_all_location_owners() -> List[Owner]:
         conn = Connector.DBConnector()
         query = sql.SQL("""
                     SELECT owner_id, owner_name
-                    FROM ApartmentOwnersFullData
-                    GROUP BY owner_id, owner_name
-                    HAVING COUNT (DISTINCT (city,country)) = (
-                        SELECT COUNT(DISTINCT (city,country))
-                        FROM Apartment
-                    );
+                    FROM distinct_cities_per_owner
+                    WHERE cities_per_owner = (SELECT total_cities FROM total_distinct_cities);
                 """).format()
 
         rows_affected, res = conn.execute(query)
@@ -886,7 +903,7 @@ def get_apartment_recommendation(customer_id: int) -> List[Tuple[Apartment, floa
         conn = Connector.DBConnector()
         query = sql.SQL("""
                 SELECT *
-                FROM CustomersUnreviewedApartmentsFilter C JOIN Apartment A ON (C.unreviewed_apartment_id = A.apartment_id)
+                FROM CustomerUnreviewedApartmentsFullData
                 WHERE customer_id = {customer_id};
                 """).format(customer_id=sql.Literal(customer_id))
         rows_affected, res = conn.execute(query)
@@ -902,67 +919,4 @@ def get_apartment_recommendation(customer_id: int) -> List[Tuple[Apartment, floa
     for tuple in res:
         apartment_recommendations.append((Apartment(tuple['unreviewed_apartment_id'], tuple['address'], tuple['city'], tuple['country'], tuple['size']), float(tuple['expected_rating'])))
     return apartment_recommendations
-
-
-if __name__ == '__main__':
-    drop_tables()
-    create_tables()
-    # print(add_apartment(Apartment(1, 'a', 'haifa', 'israel', 100)))
-    # print(add_customer(Customer(1000,'kamil')))
-    # print(add_customer(Customer(1001, 'loay')))
-    # print(customer_made_reservation(1000, 1, date(2024, 2, 20), date(2024, 2, 23), 100))
-    # print(customer_made_reservation(1000, 1, date(2025, 2, 20), date(2025, 2, 23), 100))
-    # print(customer_reviewed_apartment(1000, 1, date(2025, 1, 1), 4, 'not bad'))
-    # print(customer_reviewed_apartment(1001, 1, date(2026, 1, 1), 2, 'not bad'))
-    # print(get_apartment_rating(1))
-    # print(add_apartment(Apartment(2, 'aa', 'haifa', 'israel', 100)))
-    # print(get_apartment_rating(2))
-    # print(get_top_customer())
-    # print(get_all_location_owners())
-    print(add_apartment(Apartment(1,'a','haifa','israel',100)))
-    print(add_owner(Owner(10,'loay')))
-    print(owner_owns_apartment(10,1))
-    print(add_customer(Customer(1000,'kamil')))
-    print(customer_made_reservation(1000,1,date(2024,2,20), date(2024,2,23),100))
-    print(customer_reviewed_apartment(1000,1,date(2025,1,1),4,'not bad'))
-    print(add_apartment(Apartment(2,'b','haifa','israel',50)))
-    print(customer_made_reservation(1000,2,date(2024,2,20),date(2024,2,21),100))
-    print(customer_reviewed_apartment(1000,2,date(2025,2,2),2,'very bad'))
-    print(owner_owns_apartment(10,2))
-    print(get_apartment_rating(2))
-    print(get_owner_rating(10))
-    print(get_owner_rating(11))
-    print(add_customer(Customer(1001,'kamil1')))
-    print(add_apartment(Apartment(3,'c','haifa','israel',100)))
-    print(customer_made_reservation(1001,3,date(2024,2,20),date(2024,2,21),100.0))
-    print(customer_reviewed_apartment(1001,3,date(2024,2,22),10,'very good!'))
-    print(get_owner_rating(11))
-    print(get_owner_rating(10))
-    print(add_owner(Owner(11,'kokobalala')))
-    print(owner_owns_apartment(11,3))
-    print(get_owner_rating(11))
-    print(customer_made_reservation(1001,3,date(2026,2,20),date(2026,2,21),100.0))
-    print(get_top_customer())
-    print(customer_made_reservation(1001,3,date(2027,2,20),date(2027,2,21),100.0))
-    print("Top Customer", get_top_customer())
-    print(reservations_per_owner())
-    print(add_apartment(Apartment(4,'d','Tel aviv','Israel',40)))
-    print(get_all_location_owners())
-    print(owner_owns_apartment(11,4))
-    res = get_all_location_owners()
-    for owner in res:
-        print(owner)
-    print(best_value_for_money())
-    print(customer_made_reservation(1001,3,date(2027,5,20),date(2027,5,21),10000.0))
-    print(customer_made_reservation(1001,3,date(2027,5,23),date(2027,5,26),234.0))
-    print(customer_made_reservation(1001,3,date(2027,6,20),date(2027,9,21),10000.0))
-    print(profit_per_month(2027))
-    print(customer_made_reservation(1000,3,date(2029,2,20),date(2029,2,21),100.0))
-    print(customer_reviewed_apartment(1000,3,date(2030,2,22),5,'very good!'))
-    apartments = get_apartment_recommendation(1001)
-    for apartment in apartments:
-        print(apartment[0], apartment[1])
-    res = get_owner_apartments(11)
-    for apt in res:
-        print(apt)
 
